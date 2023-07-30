@@ -1,0 +1,243 @@
+---
+title: "MBA562_Module4_Assignment4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(forcats)
+library(stringr)
+library(dplyr)
+library(lubridate)
+library(magrittr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(viridis)
+library(sf)
+```
+
+```{r}
+sep<-read.csv('202109-divvy-tripdata.csv', stringsAsFactors=T)
+oct<-read.csv('202110-divvy-tripdata.csv', stringsAsFactors=T)
+nov<-read.csv('202111-divvy-tripdata.csv', stringsAsFactors=T)
+dec<-read.csv('202112-divvy-tripdata.csv', stringsAsFactors=T)
+jan<-read.csv('202201-divvy-tripdata.csv', stringsAsFactors=T)
+feb<-read.csv('202202-divvy-tripdata.csv', stringsAsFactors=T)
+mar<-read.csv('202203-divvy-tripdata.csv', stringsAsFactors=T)
+apr<-read.csv('202204-divvy-tripdata.csv', stringsAsFactors=T)
+may<-read.csv('202205-divvy-tripdata.csv', stringsAsFactors=T)
+jun<-read.csv('202206-divvy-tripdata.csv', stringsAsFactors=T)
+jul<-read.csv('202207-divvy-tripdata.csv', stringsAsFactors=T)
+aug<-read.csv('202208-divvy-tripdata.csv', stringsAsFactors=T)
+
+df<-bind_rows(sep, oct, nov, dec, jan, feb, mar, apr, may, jun, jul, aug)
+df$started_at1<-ymd_hms(df$started_at)
+df$ended_at1<-ymd_hms(df$ended_at)
+df$ride_time<-difftime(df$ended_at1,df$started_at1, units="mins")
+df$ride_time<-round(df$ride_time, digits=2)
+df$ride_start_day=wday(df$started_at1,label = T)  
+df$ride_start_month=month(df$started_at,label=T)
+df <- df %>%
+ rename(member_type = member_casual)
+df <- df %>%
+  rename(bike_type=rideable_type)  
+df<-df %>%
+  filter(bike_type %in% c("classic_bike", "electric_bike")) 
+
+ggplot(df,aes(x=ride_start_month,fill = member_type))+geom_bar(width=0.7,position = position_dodge(0.75))+labs(title="Monthly number of Divvy rides", subtitle="Number of rides for each month separated by consumer type", y="Number of rides", x="Month")+guides(fill=guide_legend(title="Consumer Type"))+theme(rect=element_blank())
+ggsave("myplot1.png")
+
+ggplot(df,aes(x=ride_start_day,fill = member_type))+geom_bar(width=0.7,position = position_dodge(0.75))+labs(title="Daily number of Divvy rides", subtitle="Number of rides for each day of the week separated by consumer type", y="Number of rides", x="Day of the week")+guides(fill=guide_legend(title="Consumer Type"))+theme(rect=element_blank())
+ggsave("myplot2.png")
+
+ggplot(df, aes(ride_time, fill=member_type))+geom_density(alpha=0.8)+xlim(0,60)+labs(title="Ride time for Divvy bikes", subtitle="Ride time density plot separated by consumer type", y="Denisty", x="Ride time in minutes")+guides(fill=guide_legend(title="Consumer Type"))+theme(rect=element_blank())
+ggsave("myplot3.png")
+
+mean_line<-df%>% group_by(member_type) %>%
+  summarise(mean = mean(ride_time, na.rm = T)) %>%
+ungroup()
+
+
+###################################
+# df1<-aug %>% 
+#   group_by(round(start_lng,3),round(start_lat,3),member_casual) %>% 
+#   summarise(num_rides=n()) %>% 
+#   ungroup()
+# summary(df1, digits=5)
+# 
+# chicago_boundaries<- st_read("Boundaries - Neighborhoods.geojson", quiet = TRUE)
+# chicago_boundaries<-chicago_boundaries %>% select(geometry)
+# ggplot(chicago_boundaries, aes()) + geom_sf()+theme(axis.text.x = element_blank(), axis.text.y = element_blank(),rect=element_blank(), axis.ticks = element_blank())
+
+# # library(viridis)
+# chicago_boundaries %>% ggplot(aes()) + geom_sf()+geom_bin2d(data = aug, mapping = aes(round(start_lng,3), round(start_lat,3)), bins=c(25,50)) +
+#   scale_fill_viridis(option = 'plasma') +
+#   facet_wrap(~member_casual) +
+#   theme(panel.background = element_rect(fill = "white")) +
+#   labs(title="Number of trips started in this area")
+####################################
+```
+
+```{r}
+df$start_lng1<-round(df$start_lng,3)
+df$start_lat1<-round(df$start_lat,3)  
+stations<-df%>%
+    group_by(start_lat1,start_lng1,member_type) %>%
+    summarise(num_rides=n(), mean_ride_time=mean(ride_time)) %>%
+    filter(num_rides>10)
+summary(stations)
+
+rides_thd = 100
+percent_thd = 0.75
+stations_users_member <- stations %>% 
+  filter(num_rides > rides_thd) %>%
+  mutate(percent_trips_member = num_rides / sum(num_rides),num_rides_station = sum(num_rides)) %>% 
+  filter(member_type == "member",
+  percent_trips_member > percent_thd) %>% 
+  rename(num_rides_member = num_rides) %>% 
+  arrange(num_rides_member)
+
+
+stations_users_casual <- stations %>% 
+  filter(num_rides > rides_thd) %>%
+  mutate(percent_trips_casual = num_rides / sum(num_rides),num_rides_station = sum(num_rides)) %>% 
+  filter(member_type == "casual",
+  percent_trips_casual > percent_thd) %>% 
+  rename(num_rides_casual = num_rides) %>% 
+  arrange(num_rides_casual)
+
+stations_users<-rbind(stations_users_casual, stations_users_member)
+chicago_boundaries<- st_read("Boundaries - Neighborhoods.geojson", quiet = TRUE)
+chicago_boundaries<-chicago_boundaries %>% select(geometry)
+
+# chicago_boundaries %>% ggplot() +
+#   geom_sf() +
+#   geom_point(data = stations_users, mapping = aes(x = start_lng1, y = start_lat1, size = num_rides_station), fill = member_type,
+#              color = 'black', shape = 21) + scale_size_continuous(range = c(2.5, 8)) +  labs(title = "Casual use hot spots",
+#        subtitle = paste("Stations over ", rides_thd, " rides and ", percent_thd * 100, "% member use", sep = ""), size = "Number of trips") 
+
+chicago_boundaries %>% ggplot()+
+  geom_sf() +
+  geom_point(data = stations_users, mapping = aes(x = start_lng1, y = start_lat1, size = num_rides_station, fill = member_type),
+             color = 'black', shape = 21) + scale_size_continuous(range = c(2.5, 8)) +  labs(title = "Station traffic by consumer type",
+       subtitle = "Popular stations for each customer type", size = "Number of trips")+
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank(),rect=element_blank(), axis.ticks = element_blank(), axis.title.x=element_blank(), axis.title.y = element_blank(), legend.title=element_text(size=12),plot.title=element_text(size=15))+scale_fill_discrete(name = "Consumer type", labels = c("Above 75% Casual", "Above 75% Members"))
+ggsave("myplot4.png")
+
+
+
+# chicago_boundaries %>% ggplot()+
+#   geom_sf() +
+#   geom_point(data = stations_users, mapping = aes(x = start_lng1, y = start_lat1, size = num_rides_station, fill = member_type),
+#              color = 'black', shape = 21) + scale_size_continuous(range = c(2.5, 8)) +  labs(title = "Station traffic by consumer type",
+#        subtitle = "Popular stations seperated by customer type", size = "Number of trips")+theme(legend.key.size=unit(1,'cm'))+
+#   theme(axis.text.x = element_blank(), axis.text.y = element_blank(),rect=element_blank(), axis.ticks = element_blank(), axis.title.x=element_blank(), axis.title.y = element_blank(), legend.title=element_text(size=12),plot.title=element_text(size=15))+scale_fill_discrete(name = "Consumer type", labels = c("Above 75% Casual", "Above 75% Members"))+  guides(color = guide_legend(override.aes = list(size = 20)))
+# ggsave("myplot4.png")
+
+
+# png(file="saving_plot2.png",width=10, height=10)
+# print(myplot)
+# dev.off()
+
+
+
+
+# ggsave("fig1.svg",width=10, height=10, units="cm")
+# png(file="saving_plot2.png",width=10, height=10)
+# hist(Temperature, col="gold")
+
+
+
+
+# scale_color_manual(name="Member Type", breaks=c("Above 75% casual","Above 75% members"))
+# chicago_boundaries %>% ggplot() +
+#   geom_sf() +
+#   geom_point(data = stations_users_casual, mapping = aes(x = start_lng1, y = start_lat1, size = num_rides_station), fill = 'green',
+#              color = 'black', shape = 21) + 
+#    geom_point(data = stations_users_member, mapping = aes(x = start_lng1, y = start_lat1, size = num_rides_station), fill = 'red',
+#              color = 'black', shape = 21)+
+#   scale_size_continuous(range = c(2.5, 8)) +  labs(title = "Casual use hot spots",
+#        subtitle = paste("Stations over ", rides_thd, " rides and ", percent_thd * 100, "% member use", sep = ""), size = "Number of trips")
+
+
+
+
+####################################  
+# chicago_boundaries %>% ggplot() +
+#   geom_sf() +
+#   geom_point(data = stations_users_member, 
+#              mapping = aes(x = start_lng1, y = start_lat1,
+#                            size = num_rides),
+#              fill = 'red',
+#              color = 'black',
+#              shape = 21) +
+#   scale_size_continuous(range = c(2.5, 8)) +
+#   labs(title = "Member use hot spots",
+#        subtitle = paste("Stations over ", rides_thd, " rides and ", percent_thd * 100, "% member use", sep = ""),
+#        size = "Number of trips") 
+#####################################
+# stations <- df %>% 
+#   group_by(start_station_id, member_type) %>% 
+#   summarise(station_lng = round(start_lng,3),  # there is GPS error in coords
+#             station_lat = round(start_lat,3),
+#             n_trips = n(),
+#             mean_duration = mean(ride_time)) %>% 
+#   filter(n_trips > 10)  # remove stations w/o enough data
+# summary(stations)
+```
+
+```{r}
+# NRIDES = 5000
+# PCASUAL = 0.7
+# stations_users <- stations %>% 
+#   filter(n_trips > NRIDES) %>%
+#   group_by(round(station_lng,3),round(station_lat,3)) %>%
+#   mutate(p_trips_casual = n_trips / sum(n_trips),n_trips_station = sum(n_trips)) %>% 
+#   filter(member_type == "casual",
+#          p_trips_casual > PCASUAL) %>% 
+#   rename(n_trips_casual = n_trips) %>% 
+#   arrange(p_trips_casual)
+# chicago_boundaries %>% ggplot() +
+#   geom_sf() +
+#   geom_point(data = stations_users, 
+#              mapping = aes(x = station_lng, y = station_lat,
+#                            size = n_trips_station),
+#              fill = 'red',
+#              color = 'black',
+#              shape = 21) +
+#   scale_size_continuous(range = c(2.5, 8)) +
+#   labs(title = "Casual use hot spots",
+#        subtitle = paste("Stations over ", NRIDES, " rides and ", PCASUAL * 100, "% casual use", sep = ""),
+#        size = "Number of trips") 
+###############
+```
+
+```{r}
+# NRIDES = 5000
+# PCASUAL = 0.7
+# stations_users <- stations %>% 
+#   filter(n_trips > NRIDES) %>%
+#   group_by(round(station_lng,3),round(station_lat,3)) %>%
+#   mutate(p_trips_member = n_trips / sum(n_trips),n_trips_station = sum(n_trips)) %>% 
+#   filter(member_type == "member",
+#          p_trips_member > PCASUAL) %>% 
+#   rename(n_trips_member = n_trips) %>% 
+#   arrange(p_trips_member)
+# chicago_boundaries %>% ggplot() +
+#   geom_sf() +
+#   geom_point(data = stations_users, 
+#              mapping = aes(x = station_lng, y = station_lat,
+#                            size = n_trips_station),
+#              fill = 'green',
+#              color = 'black',
+#              shape = 21) +
+#   scale_size_continuous(range = c(2.5, 8)) +
+#   labs(title = "Member use hot spots",
+#        subtitle = paste("Stations over ", NRIDES, " rides and ", PCASUAL * 100, "% member use", sep = ""),
+#        size = "Number of trips") 
+```
+
